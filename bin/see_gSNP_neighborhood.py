@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# usage: python see_gSNP_neighborhood.py -b Input.sorted.bam -f Input.fasta -v Input.sorted.bam.vcf -o Output.pdf
+# usage: python see_gSNP_neighborhood.py -b Input.sorted.bam -f Input.fasta -v Input.vcf[.gz] -o Output.pdf
 
 
 import argparse
@@ -17,19 +17,18 @@ from reportlab.rl_config import defaultPageSize
 
 
 def parseArgs(args=None):
-	parser = argparse.ArgumentParser(description='Prints raw read pileups to manually inspect putative SNPs')
+	parser = argparse.ArgumentParser(description='Prints raw read pileups to manually inspect genomic SNPs')
 	parser.add_argument('-b', '--bam', required=True, help='indexed BAM input file')
 	parser.add_argument('-f', '--fasta', required=True, help='FastA input file')
-	parser.add_argument('-v', '--vcf', required=True, help='VCF input file')
+	parser.add_argument('-v', '--vcf', required=True, help='vcf[.gz] input file')
 	parser.add_argument('-o', '--output', required=False, default='SNP_report.pdf', help='output PDF filename')
 	parser.add_argument('-n', '--numsites', required=False, type=int, default='12', help='number of SNP sites to investigate')
 	#parser.add_argument('-s', '--sites', required=False, default='', help='comma-separated positions of SNP sites to investigate')
 	return parser.parse_args()
 
 
-def get_vcf():
-	args = parseArgs()
-	VCF = vcf.Reader(filename=args.vcf, strict_whitespace=True)
+def get_vcf(infile):
+	VCF = vcf.Reader(filename=infile, strict_whitespace=True)
 	INDELs = []
 	SNPs = []
 	for record in VCF:
@@ -40,13 +39,12 @@ def get_vcf():
 	return SNPs, INDELs
 
 
-def get_ttview(chrom, pos, rows):
-	args = parseArgs()
+def get_ttview(bam, fasta, chrom, pos, rows):
 	x = 100
 	viewCmd = ['ttview',
 		'-X', str(x), #number of columns to show including the SNP site
 		'-g', '%s:%s' % (chrom, pos), #position to inspect
-		args.bam, args.fasta]
+		bam, fasta]
 	pileup = subprocess.Popen(viewCmd, stdout=subprocess.PIPE)
 	out, err = pileup.communicate()
 	return '\n'.join(out.split('\n')[0:rows])
@@ -54,9 +52,14 @@ def get_ttview(chrom, pos, rows):
 
 def main():
 	args = parseArgs()
-	
-	wantSites = int(args.numsites)
-	SNPs, INDELs = get_vcf()
+	inbam = args.bam
+	infasta = args.fasta
+	invcf = args.vcf
+	numsites = args.numsites
+	output = args.output
+
+	wantSites = int(numsites)
+	SNPs, INDELs = get_vcf(invcf)
 	vcfSNPs = len(SNPs)
 	print 'Identified %s putative SNPs' % vcfSNPs
 	#print 'Identified %s putative INDEL bases' % len(INDELs)
@@ -68,11 +71,11 @@ def main():
 	randSites = sorted(randSitesUnsorted, key=itemgetter(1), reverse=True)
 
 	#calculate page and frames
-	doc = Platypus.BaseDocTemplate(args.output, topMargin = 0, bottomMargin = 0, leftMargin = 10, rightMargin = 0)
+	doc = Platypus.BaseDocTemplate(output, topMargin=0, bottomMargin=0, leftMargin=10, rightMargin=0)
 	doc.pagesize = landscape(A4) #ISO Code A4
 	# A4 Dimensions: 297 mm x 210 mm ; 11.69 in x 8.27 in ; 842 pt x 595 pt
 
-	frameCount = (args.numsites + (-args.numsites%6)) // 6
+	frameCount = (numsites + (-numsites%6)) // 6
 	frameWidth = doc.height / frameCount
 	frameHeight = doc.width - .05 * inch
 	frames = []
@@ -82,7 +85,7 @@ def main():
 		leftMargin = doc.leftMargin + frame * frameWidth
 		column = Platypus.Frame(leftMargin, doc.bottomMargin, frameWidth, frameHeight)
 		frames.append(column)
-	template = Platypus.PageTemplate(frames = frames)
+	template = Platypus.PageTemplate(frames=frames)
 	doc.addPageTemplates(template)
 	
 	PAGE_HEIGHT = defaultPageSize[0] #size in points
@@ -92,10 +95,11 @@ def main():
 	style.fontName = 'Courier'
 	style.fontSize = 6.5
 
-	Title = "Report containing " + str(wantSites) + " of " + str(vcfSNPs) + " putative SNPs for " + os.path.basename(args.vcf)
+	Title = "Report containing " + str(wantSites) + " of " + str(vcfSNPs) + " putative SNPs for " + os.path.basename(invcf)
 	report = [Paragraph(Title, styles['Heading2'])]
 	while wantSites > 0:
-		pileup = Platypus.Preformatted(get_ttview(randSites[wantSites-1][0], randSites[wantSites-1][1] - 50, 10), style)
+		pileup = Platypus.Preformatted(get_ttview(inbam, infasta, \
+			randSites[wantSites-1][0], randSites[wantSites-1][1] - 50, 10), style)
 		if randSites[wantSites-1][2]:
 			# print 'mapqual: %s' % mapqual
 			mapqual = str(round(randSites[wantSites-1][2], 1))
