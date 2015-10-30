@@ -3,10 +3,12 @@
 
 
 import argparse
+import os
 import random
 import subprocess
 import reportlab.platypus as Platypus
 import vcf
+from operator import itemgetter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus.paragraph import Paragraph
@@ -28,11 +30,14 @@ def parseArgs(args=None):
 def get_vcf():
 	args = parseArgs()
 	VCF = vcf.Reader(filename=args.vcf, strict_whitespace=True)
+	INDELs = []
 	SNPs = []
 	for record in VCF:
-		if record.is_snp:
-			SNPs.append((record.CHROM, record.POS, record.QUAL, str(record.REF) + '->' + str(record.ALT)))
-	return SNPs
+		if record.is_indel:
+			INDELs.append((record.CHROM, record.POS, record.QUAL))
+		elif record.is_snp:
+			SNPs.append((record.CHROM, record.POS, record.QUAL, str(record.REF) + '->' + str(record.ALT).strip('[]')))
+	return SNPs, INDELs
 
 
 def get_ttview(chrom, pos, rows):
@@ -51,13 +56,16 @@ def main():
 	args = parseArgs()
 	
 	wantSites = int(args.numsites)
-	vcfSNPs = len(get_vcf())
+	SNPs, INDELs = get_vcf()
+	vcfSNPs = len(SNPs)
 	print 'Identified %s putative SNPs' % vcfSNPs
-	if wantSites > len(get_vcf()):
+	#print 'Identified %s putative INDEL bases' % len(INDELs)
+	if wantSites > vcfSNPs:
 		print 'Number of requested SNP sites to investigate exceeds number of identified SNPs'
 		print 'Selecting all %s putative SNP sites to print...' % vcfSNPs
 		wantSites = vcfSNPs
-	randSites = random.sample(get_vcf(), wantSites) #randomly selected sites to investigate
+	randSitesUnsorted = random.sample(SNPs, wantSites) #randomly selected sites to investigate
+	randSites = sorted(randSitesUnsorted, key=itemgetter(1), reverse=True)
 
 	#calculate page and frames
 	doc = Platypus.BaseDocTemplate(args.output, topMargin = 0, bottomMargin = 0, leftMargin = 10, rightMargin = 0)
@@ -84,16 +92,20 @@ def main():
 	style.fontName = 'Courier'
 	style.fontSize = 6.5
 
-	Title = "Report containing " + str(wantSites) + " of " + str(vcfSNPs) + " putative SNPs for " + args.vcf
+	Title = "Report containing " + str(wantSites) + " of " + str(vcfSNPs) + " putative SNPs for " + os.path.basename(args.vcf)
 	report = [Paragraph(Title, styles['Heading2'])]
 	while wantSites > 0:
 		pileup = Platypus.Preformatted(get_ttview(randSites[wantSites-1][0], randSites[wantSites-1][1] - 50, 10), style)
-		mapqual = str(round(randSites[wantSites-1][2], 1))
+		if randSites[wantSites-1][2]:
+			# print 'mapqual: %s' % mapqual
+			mapqual = str(round(randSites[wantSites-1][2], 1))
+		else: #avoids error when 'QUAL' in VCF is '.'
+			mapqual = '*not available*'
 		pos = str(randSites[wantSites-1][1])
 		SNP = str(randSites[wantSites-1][3])
-		report.append(Paragraph(SNP + " SNP at position " + pos + " with map quality " + mapqual, styles['Heading6']))
-		report.append(Platypus.KeepTogether(pileup))
-		report.append(Platypus.Spacer(0.25, 0.05*inch))
+		header = Paragraph(SNP + " at position " + pos + " with a base quality score of " + mapqual, styles['Heading6'])
+		gap = Platypus.Spacer(0.25, 0.05*inch)
+		report.append(Platypus.KeepTogether([gap, header, pileup]))
 		wantSites -= 1
 	doc.build(report)
 
