@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-# usage: python see_gSNP_neighborhood.py -b Input.sorted.bam -f Input.fasta -v Input.vcf[.gz] -o Output.pdf
+# usage: python see_gSNP_neighborhood.py -b Input.sorted.bam -f Input.fasta -v Input.vcf[.gz]
 
 
 import argparse
 import os
 import random
+import re
 import subprocess
 import reportlab.platypus as Platypus
 import vcf
@@ -22,7 +23,8 @@ def parseArgs(args=None):
 	parser.add_argument('-f', '--fasta', required=True, help='FastA input file')
 	parser.add_argument('-v', '--vcf', required=True, help='vcf[.gz] input file')
 	parser.add_argument('-o', '--output', required=False, default='SNP_report.pdf', help='output PDF filename')
-	parser.add_argument('-n', '--numsites', required=False, type=int, default='12', help='number of SNP sites to investigate')
+	parser.add_argument('-n', '--numsites', required=False, type=int, default='10', help='number of SNP sites to investigate')
+	parser.add_argument('-r', '--rows', required=False, type=int, default='12', help='maximum number of rows/lines to show per pileup')
 	#parser.add_argument('-s', '--sites', required=False, default='', help='comma-separated positions of SNP sites to investigate')
 	return parser.parse_args()
 
@@ -35,7 +37,20 @@ def get_vcf(infile):
 		if record.is_indel:
 			INDELs.append((record.CHROM, record.POS, record.QUAL))
 		elif record.is_snp:
-			SNPs.append((record.CHROM, record.POS, record.QUAL, str(record.REF) + '->' + str(record.ALT).strip('[]')))
+			if record.is_monomorphic is False:
+				if 'ADP' in record.INFO:
+					ADP = record.INFO['ADP']  #record.INFO is a dict
+				else:
+					ADP = '*not available*'
+				sampleDataStr = str(record.samples).strip('CallData()[]')
+				uglyList = re.findall(r'\w+=[\d./E]+', sampleDataStr)
+				sampleDataDict = dict([pair.split('=', 1) for pair in uglyList])
+				if 'SDP' in sampleDataDict:
+					SDP = sampleDataDict['SDP']
+				else:
+					SDP = '*not available*'
+				SNPs.append((record.CHROM, record.POS, record.QUAL, ADP,
+					SDP, str(record.REF) + '->' + str(record.ALT).strip('[]'), ADP))
 	return SNPs, INDELs
 
 
@@ -57,6 +72,7 @@ def main():
 	invcf = args.vcf
 	numsites = args.numsites
 	output = args.output
+	rows = args.rows
 
 	wantSites = int(numsites)
 	SNPs, INDELs = get_vcf(invcf)
@@ -75,7 +91,7 @@ def main():
 	doc.pagesize = landscape(A4) #ISO Code A4
 	# A4 Dimensions: 297 mm x 210 mm ; 11.69 in x 8.27 in ; 842 pt x 595 pt
 
-	frameCount = (numsites + (-numsites%6)) // 6
+	frameCount = 2  #(numsites + (-numsites%6)) // 6
 	frameWidth = doc.height / frameCount
 	frameHeight = doc.width - .05 * inch
 	frames = []
@@ -95,19 +111,23 @@ def main():
 	style.fontName = 'Courier'
 	style.fontSize = 6.5
 
-	Title = "Report containing " + str(wantSites) + " of " + str(vcfSNPs) + " putative SNPs for " + os.path.basename(invcf)
+	Title = ("Report containing " + str(wantSites) + " of " + str(vcfSNPs) +
+			" putative SNPs for " + os.path.basename(invcf))
 	report = [Paragraph(Title, styles['Heading2'])]
 	while wantSites > 0:
-		pileup = Platypus.Preformatted(get_ttview(inbam, infasta, \
-			randSites[wantSites-1][0], randSites[wantSites-1][1] - 50, 10), style)
+		pileup = Platypus.Preformatted(get_ttview(inbam, infasta,
+		randSites[wantSites-1][0], randSites[wantSites-1][1] - 50, rows), style)
 		if randSites[wantSites-1][2]:
-			# print 'mapqual: %s' % mapqual
 			mapqual = str(round(randSites[wantSites-1][2], 1))
-		else: #avoids error when 'QUAL' in VCF is '.'
+		else:  #avoids error when 'QUAL' in VCF is '.'
 			mapqual = '*not available*'
 		pos = str(randSites[wantSites-1][1])
-		SNP = str(randSites[wantSites-1][3])
-		header = Paragraph(SNP + " at position " + pos + " with a base quality score of " + mapqual, styles['Heading6'])
+		ADP = str(randSites[wantSites-1][3])
+		SDP = str(randSites[wantSites-1][4])
+		SNP = str(randSites[wantSites-1][5])
+		header = Paragraph(SNP + " at position " + pos +
+			" with a base quality score of " + mapqual +
+			" and raw read depth of " + SDP, styles['Heading6'])
 		gap = Platypus.Spacer(0.25, 0.05*inch)
 		report.append(Platypus.KeepTogether([gap, header, pileup]))
 		wantSites -= 1
