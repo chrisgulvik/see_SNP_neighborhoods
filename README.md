@@ -1,4 +1,4 @@
-# see_SNP_neighborhoods
+# see SNP neighborhoods
 Visualize read pileup neighborhoods of SNPs to identify false positives
 
 
