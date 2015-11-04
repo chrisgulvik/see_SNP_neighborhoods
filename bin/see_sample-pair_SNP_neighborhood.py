@@ -80,26 +80,26 @@ def get_pairwiseSNP_vcf(pos, infile):
 		if int(pos[0]) == record.POS:
 			#print pos[0], record
 			if record.QUAL:
-				qual = record.QUAL
+				qual = str(record.QUAL)
 			else:
-				qual = '*not available*'
+				qual = '*absent from VCF*'
 			if 'ADP' in record.INFO:
 				ADP = str(record.INFO['ADP'])  #record.INFO is a dict
 			else:
-				ADP = '*not available*'
+				ADP = '*absent from VCF*'
 			sampleDataStr = str(record.samples).strip('CallData()[]')
 			uglyList = re.findall(r'\w+=[\d./E]+', sampleDataStr)
 			sampleDataDict = dict([pair.split('=', 1) for pair in uglyList])
 			if 'SDP' in sampleDataDict:
 				SDP = sampleDataDict['SDP']
 			else:
-				SDP = '*not available*'
+				SDP = '*absent from VCF*'
 			vcfData.append([int(pos[0]), record.CHROM, qual, ADP, SDP])
 			#vcfData[int(pos[0])] = [record.CHROM, qual, ADP, SDP]
 			del pos[0]
 		elif int(pos[0]) < record.POS:
-			print '%s position not found' % pos[0]
-			vcfData.append([int(pos[0]), record.CHROM, 'absent from VCF', 'absent from VCF', 'absent from VCF'])
+			print '%s position not found in VCF' % pos[0]
+			vcfData.append([int(pos[0]), record.CHROM, '*absent from VCF*', '*absent from VCF*', '*absent from VCF*'])
 			#vcfData[int(pos[0])] = [record.CHROM, 'absent from VCF', 'absent from VCF', 'absent from VCF']
 			del pos[0]
 		#VCF.fetch(record.CHROM, int(i), int(i)))
@@ -186,8 +186,6 @@ def main():
 			os.path.basename(invcf2))
 	report = [Paragraph(Title, styles['Heading2'])]
 
-	print '%s randSitesRev' % randSitesRev
-
 	while numSites > 0:
 		if randSitesRev[numSites-1] < 50:
 			position = (vcfData1Rev[numSites-1][0])
@@ -201,16 +199,18 @@ def main():
 		pos = str(vcfData1Rev[numSites-1][0])
 		SDP1 = vcfData1Rev[numSites-1][4]
 		SDP2 = vcfData2Rev[numSites-1][4]
+		qual1 = vcfData1Rev[numSites-1][2]
+		qual2 = vcfData2Rev[numSites-1][2]
 		SNP = str(pairwiseSNPs[int(pos)][2] + '-vs-' + pairwiseSNPs[int(pos)][3])
 
 		header1 = Paragraph(SNP + ' at position ' + pos +
 			' for ' + os.path.basename(invcf1) +
-			' with a base quality score of ' +
+			' with a base quality score of ' + qual1 +
 			' and raw read depth of ' + SDP1
 			, styles['Heading6'])
 		header2 = Paragraph(SNP + ' at position ' + pos +
 			' for ' + os.path.basename(invcf2) +
-			' with a base quality score of ' +
+			' with a base quality score of ' + qual2 +
 			' and raw read depth of ' + SDP2
 			, styles['Heading6'])
 		gap = Platypus.Spacer(0.25, 0.05*inch)
