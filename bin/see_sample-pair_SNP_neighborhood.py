@@ -29,7 +29,7 @@ def parseArgs(args=None):
 	parser.add_argument('-s', '--snpmatrix', required=True, help='out.snpmatrix.tsv')
 	parser.add_argument('-v1', '--vcf1', required=True, help='VCF input file')
 	parser.add_argument('-v2', '--vcf2', required=True, help='VCF input file')
-	parser.add_argument('-o', '--output', required=False, default='SNP_report2.pdf', help='output PDF filename')
+	parser.add_argument('-o', '--output', required=False, default='SNP_Report.pdf', help='output PDF filename')
 	parser.add_argument('-r', '--rows', required=False, type=int, default='12', help='maximum number of rows/lines to show per pileup')
 	parser.add_argument('-n', '--numsites', required=False, type=int, default='12', help='number of SNP sites to investigate')
 	return parser.parse_args()
@@ -79,23 +79,27 @@ def get_pairwiseSNP_vcf(pos, infile):
 			break
 		if int(pos[0]) == record.POS:
 			#print pos[0], record
-			if record.QUAL:
-				qual = str(record.QUAL)
-			else:
-				qual = '*absent from VCF*'
-			if 'ADP' in record.INFO:
-				ADP = str(record.INFO['ADP'])  #record.INFO is a dict
-			else:
-				ADP = '*absent from VCF*'
 			sampleDataStr = str(record.samples).strip('CallData()[]')
 			uglyList = re.findall(r'\w+=[\d./E]+', sampleDataStr)
 			sampleDataDict = dict([pair.split('=', 1) for pair in uglyList])
-			if 'SDP' in sampleDataDict:
-				SDP = sampleDataDict['SDP']
+
+			if 'DP' in sampleDataDict:
+				DP = sampleDataDict['DP']	
 			else:
-				SDP = '*absent from VCF*'
-			vcfData.append([int(pos[0]), record.CHROM, qual, ADP, SDP])
-			#vcfData[int(pos[0])] = [record.CHROM, qual, ADP, SDP]
+				DP = '*not available*'
+
+			if 'MQ' in sampleDataDict:
+				MQ = sampleDataDict['MQ']
+			else:
+				MQ = '*not available*'
+
+			if record.QUAL:
+				QUAL = str(round(record.QUAL, 1))
+			else:  #avoids error when 'QUAL' in VCF is '.'
+				QUAL = '*not available*'
+
+			vcfData.append([int(pos[0]), record.CHROM, QUAL, DP, MQ])
+			#vcfData[int(pos[0])] = [record.CHROM, QUAL, DP, MQ]
 			del pos[0]
 		elif int(pos[0]) < record.POS:
 			print '%s position not found in VCF' % pos[0]
@@ -197,21 +201,23 @@ def main():
 		vcfData2Rev[numSites-1][1], position, rows), style)
 
 		pos = str(vcfData1Rev[numSites-1][0])
-		SDP1 = vcfData1Rev[numSites-1][4]
-		SDP2 = vcfData2Rev[numSites-1][4]
+		MQ1 = vcfData1Rev[numSites-1][4]
+		MQ2 = vcfData2Rev[numSites-1][4]
+		DP1 = vcfData1Rev[numSites-1][3]
+		DP2 = vcfData2Rev[numSites-1][3]
 		qual1 = vcfData1Rev[numSites-1][2]
 		qual2 = vcfData2Rev[numSites-1][2]
 		SNP = str(pairwiseSNPs[int(pos)][2] + '-vs-' + pairwiseSNPs[int(pos)][3])
 
 		header1 = Paragraph(SNP + ' at position ' + pos +
 			' for ' + os.path.basename(invcf1) +
-			' with a base quality score of ' + qual1 +
-			' and raw read depth of ' + SDP1
+			' with a QUAL of ' + qual1 + ", MQ of " + MQ1 +
+			', and raw read depth of ' + DP1
 			, styles['Heading6'])
 		header2 = Paragraph(SNP + ' at position ' + pos +
 			' for ' + os.path.basename(invcf2) +
-			' with a base quality score of ' + qual2 +
-			' and raw read depth of ' + SDP2
+			' with a QUAL of ' + qual2 + ", MQ of " + MQ2 +
+			', and raw read depth of ' + DP2
 			, styles['Heading6'])
 		gap = Platypus.Spacer(0.25, 0.05*inch)
 		report.append(Platypus.KeepTogether([gap, header1, pileup1]))
