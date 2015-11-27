@@ -25,7 +25,6 @@ def parseArgs(args=None):
 	parser.add_argument('-o', '--output', required=False, default='SNP_report.pdf', help='output PDF filename')
 	parser.add_argument('-n', '--numsites', required=False, type=int, default='10', help='number of SNP sites to investigate')
 	parser.add_argument('-r', '--rows', required=False, type=int, default='12', help='maximum number of rows/lines to show per pileup')
-	#parser.add_argument('-s', '--sites', required=False, default='', help='comma-separated positions of SNP sites to investigate')
 	return parser.parse_args()
 
 
@@ -38,19 +37,27 @@ def get_vcf(infile):
 			INDELs.append((record.CHROM, record.POS, record.QUAL))
 		elif record.is_snp:
 			if record.is_monomorphic is False:
-				if 'ADP' in record.INFO:
-					ADP = record.INFO['ADP']  #record.INFO is a dict
-				else:
-					ADP = '*not available*'
 				sampleDataStr = str(record.samples).strip('CallData()[]')
 				uglyList = re.findall(r'\w+=[\d./E]+', sampleDataStr)
 				sampleDataDict = dict([pair.split('=', 1) for pair in uglyList])
-				if 'SDP' in sampleDataDict:
-					SDP = sampleDataDict['SDP']
+
+				if 'DP' in sampleDataDict:
+					DP = sampleDataDict['DP']	
 				else:
-					SDP = '*not available*'
-				SNPs.append((record.CHROM, record.POS, record.QUAL, ADP,
-					SDP, str(record.REF) + '->' + str(record.ALT).strip('[]'), ADP))
+					DP = '*not available*'
+
+				if 'MQ' in sampleDataDict:
+					MQ = sampleDataDict['MQ']
+				else:
+					MQ = '*not available*'
+
+				if record.QUAL:
+					QUAL = str(round(record.QUAL, 1))
+				else:  #avoids error when 'QUAL' in VCF is '.'
+					QUAL = '*not available*'
+
+				SNPs.append((record.CHROM, record.POS, QUAL, DP, MQ,
+					str(record.REF) + '->' + str(record.ALT).strip('[]')))
 	return SNPs, INDELs
 
 
@@ -117,17 +124,14 @@ def main():
 	while wantSites > 0:
 		pileup = Platypus.Preformatted(get_ttview(inbam, infasta,
 		randSites[wantSites-1][0], randSites[wantSites-1][1] - 50, rows), style)
-		if randSites[wantSites-1][2]:
-			mapqual = str(round(randSites[wantSites-1][2], 1))
-		else:  #avoids error when 'QUAL' in VCF is '.'
-			mapqual = '*not available*'
 		pos = str(randSites[wantSites-1][1])
-		ADP = str(randSites[wantSites-1][3])
-		SDP = str(randSites[wantSites-1][4])
+		QUAL = str(randSites[wantSites-1][2])
+		DP = str(randSites[wantSites-1][3])
+		MQ = str(randSites[wantSites-1][4])
 		SNP = str(randSites[wantSites-1][5])
 		header = Paragraph(SNP + " at position " + pos +
-			" with a base quality score of " + mapqual +
-			" and raw read depth of " + SDP, styles['Heading6'])
+			" with a QUAL of " + QUAL + ", MQ of " + MQ +
+			", and raw read depth (DP) of " + DP, styles['Heading6'])
 		gap = Platypus.Spacer(0.25, 0.05*inch)
 		report.append(Platypus.KeepTogether([gap, header, pileup]))
 		wantSites -= 1
