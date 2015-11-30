@@ -37,17 +37,16 @@ def get_vcf(infile):
 			INDELs.append((record.CHROM, record.POS, record.QUAL))
 		elif record.is_snp:
 			if record.is_monomorphic is False:
-				sampleDataStr = str(record.samples).strip('CallData()[]')
-				uglyList = re.findall(r'\w+=[\d./E]+', sampleDataStr)
-				sampleDataDict = dict([pair.split('=', 1) for pair in uglyList])
-
-				if 'DP' in sampleDataDict:
-					DP = sampleDataDict['DP']	
+				# sampleDataStr = str(record.samples).strip('CallData()[]')
+				# uglyList = re.findall(r'\w+=[\d./E]+', sampleDataStr)
+				# sampleDataDict = dict([pair.split('=', 1) for pair in uglyList])
+				if record.INFO['DP']:
+					DP = record.INFO['DP']	
 				else:
 					DP = '*not available*'
 
-				if 'MQ' in sampleDataDict:
-					MQ = sampleDataDict['MQ']
+				if record.INFO['MQ']:
+					MQ = record.INFO['MQ']
 				else:
 					MQ = '*not available*'
 
