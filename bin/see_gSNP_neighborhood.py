@@ -42,11 +42,11 @@ def get_vcf(infile):
 				# sampleDataStr = str(record.samples).strip('CallData()[]')
 				# uglyList = re.findall(r'\w+=[\d./E]+', sampleDataStr)
 				# sampleDataDict = dict([pair.split('=', 1) for pair in uglyList])
-				if record.INFO['DP']:
+				if 'DP' in record.INFO:
 					DP = record.INFO['DP']	
 				else:
 					DP = '*not available*'
-				if record.INFO['MQ']:
+				if 'MQ' in record.INFO:
 					MQ = record.INFO['MQ']
 				else:
 					MQ = '*not available*'
