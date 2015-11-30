@@ -21,21 +21,42 @@ from reportlab.rl_config import defaultPageSize
 
 def parseArgs(args=None):
 	parser = argparse.ArgumentParser(description='Prints raw read pileups to manually inspect putative SNPs of a sample pair')
-	parser.add_argument('-1', '--Sample1Name', required=True, help='First sample name in VCF to compare (pairwise)')
-	parser.add_argument('-2', '--Sample2Name', required=True, help='Second sample name in VCF to compare (pairwise)')
+	parser.add_argument('-1', '--Sample1Name', help='First sample name in VCF to compare (pairwise)')
+	parser.add_argument('-2', '--Sample2Name', help='Second sample name in VCF to compare (pairwise)')
 	parser.add_argument('-b1', '--bam1', required=True, help='indexed BAM input file')
 	parser.add_argument('-b2', '--bam2', required=True, help='indexed BAM input file')
 	parser.add_argument('-f', '--fasta', required=True, help='FastA input file')
 	parser.add_argument('-s', '--snpmatrix', required=True, help='out.snpmatrix.tsv')
 	parser.add_argument('-v1', '--vcf1', required=True, help='VCF input file')
 	parser.add_argument('-v2', '--vcf2', required=True, help='VCF input file')
-	parser.add_argument('-o', '--output', required=False, default='SNP_Report.pdf', help='output PDF filename')
-	parser.add_argument('-r', '--rows', required=False, type=int, default='12', help='maximum number of rows/lines to show per pileup')
-	parser.add_argument('-n', '--numsites', required=False, type=int, default='12', help='number of SNP sites to investigate')
+	parser.add_argument('-o', '--output', default='SNP_Report.pdf', help='output PDF filename')
+	parser.add_argument('-r', '--rows', type=int, default=12, help='maximum number of rows/lines to show per pileup')
+	parser.add_argument('-n', '--numsites', type=int, default=10, help='number of SNP sites to investigate')
+	parser.add_argument('-p', '--positions', help='CSV-delimited list of SNP positions to investigate')
 	return parser.parse_args()
 
 
-def pairwiseSNPlist(snpMatrix, Sample1Name, Sample2Name):
+def get_longestSubstr(s1, s2):
+	longestSubstr = ''
+	str1 = os.path.basename(s1) #avoid matching filepaths
+	str2 = os.path.basename(s2)
+	len1, len2 = len(str1), len(str2)
+	for i in range(len1):
+		match = ''
+		for j in range(len2):
+			if (i+j<len1 and str1[i+j]==str2[j]):
+				match += str2[j]
+			else:
+				if (len(match) > len(longestSubstr)):
+					longestSubstr = match
+				else:
+					match = ''
+		if len(match) > len(longestSubstr):
+			longestSubstr = match
+	return longestSubstr.rstrip('.') #discard trailing period if exists
+
+
+def get_pairwiseSNPlist(snpMatrix, Sample1Name, Sample2Name):
 	pairedSNPs = {}
 	with open(snpMatrix) as snpTSV:
 		for line in snpTSV:
@@ -75,39 +96,28 @@ def get_pairwiseSNP_vcf(pos, infile):
 	vcfData = []
 	for record in VCF: #class 'vcf.parser.Reader' object
 		if not pos:
-			print 'quit parsing on %s (to save time)' % record.POS
+			#print 'quit parsing on %s (to save time)' % record.POS
 			break
 		if int(pos[0]) == record.POS:
-			#print pos[0], record
-			sampleDataStr = str(record.samples).strip('CallData()[]')
-			uglyList = re.findall(r'\w+=[\d./E]+', sampleDataStr)
-			sampleDataDict = dict([pair.split('=', 1) for pair in uglyList])
-
-			if 'DP' in sampleDataDict:
-				DP = sampleDataDict['DP']	
+			if 'DP' in record.INFO: #record.INFO is a dict
+				DP = record.INFO['DP']	
 			else:
 				DP = '*not available*'
-
-			if 'MQ' in sampleDataDict:
-				MQ = sampleDataDict['MQ']
+			if 'MQ' in record.INFO:
+				MQ = record.INFO['MQ']
 			else:
 				MQ = '*not available*'
-
 			if record.QUAL:
 				QUAL = str(round(record.QUAL, 1))
 			else:  #avoids error when 'QUAL' in VCF is '.'
 				QUAL = '*not available*'
-
 			vcfData.append([int(pos[0]), record.CHROM, QUAL, DP, MQ])
-			#vcfData[int(pos[0])] = [record.CHROM, QUAL, DP, MQ]
 			del pos[0]
 		elif int(pos[0]) < record.POS:
-			print '%s position not found in VCF' % pos[0]
+			print '%s position not found in %s' % (pos[0], infile)
 			vcfData.append([int(pos[0]), record.CHROM, '*absent from VCF*', '*absent from VCF*', '*absent from VCF*'])
-			#vcfData[int(pos[0])] = [record.CHROM, 'absent from VCF', 'absent from VCF', 'absent from VCF']
 			del pos[0]
-		#VCF.fetch(record.CHROM, int(i), int(i)))
-	return vcfData
+	return sorted(vcfData, reverse=True)
 
 
 def get_ttview(bam, fasta, chrom, pos, rows):
@@ -128,33 +138,52 @@ def main():
 	infasta = args.fasta
 	invcf1 = args.vcf1
 	invcf2 = args.vcf2
-	wantSites = int(args.numsites)
+	quantityWantSites = int(args.numsites)
 	output = args.output
 	rows = args.rows
 	Sample1Name = args.Sample1Name
 	Sample2Name = args.Sample2Name
 	snpMatrix = args.snpmatrix
 
-	pairwiseSNPs = pairwiseSNPlist(snpMatrix, Sample1Name, Sample2Name)
+	# attempt to auto-detect sample names (experimental)
+	if not Sample1Name:
+		Sample1Name = (get_longestSubstr(inbam1, invcf1)).rstrip('.fastq-reference')
+	if not Sample2Name:
+		Sample2Name = (get_longestSubstr(inbam2, invcf2)).rstrip('.fastq-reference')
+
+	pairwiseSNPs = get_pairwiseSNPlist(snpMatrix, Sample1Name, Sample2Name)
 	pairwiseSNPpositions = pairwiseSNPs.keys()
 
-	if wantSites > len(pairwiseSNPpositions):
-		print 'Number of requested SNP sites to investigate exceeds number of identified SNPs'
-		print 'Selecting all %s putative SNP sites to print...' % len(pairwiseSNPpositions)
-		wantSites = len(pairwiseSNPpositions)
-	randSitesUnsorted = random.sample(pairwiseSNPpositions, wantSites) #randomly selected sites to investigate
-	randSitesUnsortedInts = [int(i) for i in randSitesUnsorted] #convert strings to integers
-	randSites = sorted(randSitesUnsortedInts)
-	randSitesRev = sorted(randSitesUnsortedInts, reverse=True)
-	randSites1 = randSites[:]
-	randSites2 = randSites[:]
-	randSitesRev2 = randSitesRev
+	# enable explicitly given positions (e.g., -p '89,3969181,44,123456') to investigate
+	if args.positions:
+		posList = [int(n) for n in args.positions.split(',')]
+		unsortedListWantSitesVCF = []
+		for i in posList:
+			if i in pairwiseSNPpositions:
+				unsortedListWantSitesVCF.append(i)
+			else:
+				sys.exit('ERROR: specified position %s not a pairwise SNP' % i)
+		quantityWantSites = len(unsortedListWantSitesVCF)
+		listWantSitesVCF = sorted(unsortedListWantSitesVCF, reverse=True) #for pileup report building
+		SitesVCF = sorted(unsortedListWantSitesVCF)
+		Sites1 = SitesVCF[:] #copy because I delete each pos/element as I iterate through the list in the get_pairwiseSNP_vcf function
+		Sites2 = SitesVCF[:]
 
-	vcfData1 = get_pairwiseSNP_vcf(randSites1, invcf1)
-	vcfData1Rev = sorted(vcfData1, reverse=True)
-	vcfData2 = get_pairwiseSNP_vcf(randSites2, invcf2)
-	vcfData2Rev = sorted(vcfData2, reverse=True)
-	print 'parsing of VCFs completed...'
+	# randomly select SNP sites if positions (-p) unspecified
+	else:
+		if quantityWantSites > len(pairwiseSNPpositions):
+			print 'Number of requested SNP sites to investigate exceeds number of identified SNPs'
+			print 'Selecting all %s putative SNP sites to print...' % len(pairwiseSNPpositions)
+			quantityWantSites = len(pairwiseSNPpositions)
+		randSitesUnsorted = random.sample(pairwiseSNPpositions, quantityWantSites) #randomly selected sites to investigate
+		randSitesUnsortedInts = [int(i) for i in randSitesUnsorted] #convert strings to integers
+		listWantSitesVCF = sorted(randSitesUnsortedInts, reverse=True) #for pileup report building
+		randSites = sorted(randSitesUnsortedInts)
+		Sites1 = randSites[:] #copy because I delete each pos/element as I iterate through the list in the get_pairwiseSNP_vcf function
+		Sites2 = randSites[:]
+
+	vcfData1 = get_pairwiseSNP_vcf(Sites1, invcf1)
+	vcfData2 = get_pairwiseSNP_vcf(Sites2, invcf2)
 
 	if len(vcfData1) != len(vcfData2):
 		sys.exit('ERROR in VCF parsing')
@@ -185,40 +214,41 @@ def main():
 	style.fontName = 'Courier'
 	style.fontSize = 6.5
 
-	Title = ('Report containing ' + str(wantSites) + ' of ' + str(len(pairwiseSNPpositions)) +
+	Title = ('Report containing ' + str(quantityWantSites) + ' of ' + str(len(pairwiseSNPpositions)) +
 			' putative SNPs for ' + os.path.basename(invcf1) + ' and ' +
 			os.path.basename(invcf2))
 	report = [Paragraph(Title, styles['Heading2'])]
 
 	while numSites > 0:
-		if randSitesRev[numSites-1] < 50:
-			position = (vcfData1Rev[numSites-1][0])
-		else:
-			position = (vcfData1Rev[numSites-1][0] - 50)
-		pileup1 = Platypus.Preformatted(get_ttview(inbam1, infasta,
-		vcfData1Rev[numSites-1][1], position, rows), style)
-		pileup2 = Platypus.Preformatted(get_ttview(inbam2, infasta,
-		vcfData2Rev[numSites-1][1], position, rows), style)
+		#handle SNP sites at beginning of Chrom (<50 bases in)
+		posMinusFitty = (listWantSitesVCF[numSites - 1] - 50)
+		centeredPos = str(max(posMinusFitty, 0)) 
 
-		pos = str(vcfData1Rev[numSites-1][0])
-		MQ1 = vcfData1Rev[numSites-1][4]
-		MQ2 = vcfData2Rev[numSites-1][4]
-		DP1 = vcfData1Rev[numSites-1][3]
-		DP2 = vcfData2Rev[numSites-1][3]
-		qual1 = vcfData1Rev[numSites-1][2]
-		qual2 = vcfData2Rev[numSites-1][2]
+		pileup1 = Platypus.Preformatted(get_ttview(inbam1, infasta,
+		vcfData1[numSites-1][1], centeredPos, rows), style)
+		pileup2 = Platypus.Preformatted(get_ttview(inbam2, infasta,
+		vcfData2[numSites-1][1], centeredPos, rows), style)
+
+		pos = str(vcfData1[numSites-1][0])
+		MQ1 = vcfData1[numSites-1][4]
+		MQ2 = vcfData2[numSites-1][4]
+		DP1 = vcfData1[numSites-1][3]
+		DP2 = vcfData2[numSites-1][3]
+		qual1 = vcfData1[numSites-1][2]
+		qual2 = vcfData2[numSites-1][2]
 		SNP = str(pairwiseSNPs[int(pos)][2] + '-vs-' + pairwiseSNPs[int(pos)][3])
 
 		header1 = Paragraph(SNP + ' at position ' + pos +
-			' for ' + os.path.basename(invcf1) +
+			' for ' + Sample1Name +
 			' with a QUAL of ' + qual1 + ", MQ of " + MQ1 +
-			', and raw read depth of ' + DP1
+			', and raw read depth (DP) of ' + DP1
 			, styles['Heading6'])
 		header2 = Paragraph(SNP + ' at position ' + pos +
-			' for ' + os.path.basename(invcf2) +
+			' for ' + Sample2Name +
 			' with a QUAL of ' + qual2 + ", MQ of " + MQ2 +
-			', and raw read depth of ' + DP2
+			', and raw read depth (DP) of ' + DP2
 			, styles['Heading6'])
+
 		gap = Platypus.Spacer(0.25, 0.05*inch)
 		report.append(Platypus.KeepTogether([gap, header1, pileup1]))
 		report.append(Platypus.KeepTogether([gap, header2, pileup2]))
