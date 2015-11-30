@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# usage: python see_gSNP_neighborhood.py -b Input.sorted.bam -f Input.fasta -v Input.vcf[.gz]
+# usage: python see_gSNP_neighborhood.py -b Input.sorted.bam -f Input.fasta -v Input.vcf[.gz] [-o Report.pdf]
 
 
 import argparse
@@ -7,6 +7,7 @@ import os
 import random
 import re
 import subprocess
+import sys
 import reportlab.platypus as Platypus
 import vcf
 from operator import itemgetter
@@ -22,9 +23,10 @@ def parseArgs(args=None):
 	parser.add_argument('-b', '--bam', required=True, help='indexed BAM input file')
 	parser.add_argument('-f', '--fasta', required=True, help='FastA input file')
 	parser.add_argument('-v', '--vcf', required=True, help='vcf[.gz] input file')
-	parser.add_argument('-o', '--output', required=False, default='SNP_report.pdf', help='output PDF filename')
-	parser.add_argument('-n', '--numsites', required=False, type=int, default='10', help='number of SNP sites to investigate')
-	parser.add_argument('-r', '--rows', required=False, type=int, default='12', help='maximum number of rows/lines to show per pileup')
+	parser.add_argument('-o', '--output', default='SNP_report.pdf', help='output PDF filename')
+	parser.add_argument('-n', '--numsites', type=int, default=10, help='number of SNP sites to investigate')
+	parser.add_argument('-r', '--rows', type=int, default=12, help='maximum number of rows/lines to show per pileup')
+	parser.add_argument('-p', '--positions', help='CSV-delimited list of SNP positions to investigate')
 	return parser.parse_args()
 
 
@@ -44,12 +46,10 @@ def get_vcf(infile):
 					DP = record.INFO['DP']	
 				else:
 					DP = '*not available*'
-
 				if record.INFO['MQ']:
 					MQ = record.INFO['MQ']
 				else:
 					MQ = '*not available*'
-
 				if record.QUAL:
 					QUAL = str(round(record.QUAL, 1))
 				else:  #avoids error when 'QUAL' in VCF is '.'
@@ -80,17 +80,35 @@ def main():
 	output = args.output
 	rows = args.rows
 
-	wantSites = int(numsites)
 	SNPs, INDELs = get_vcf(invcf)
 	vcfSNPs = len(SNPs)
 	print 'Identified %s putative SNPs' % vcfSNPs
 	#print 'Identified %s putative INDEL bases' % len(INDELs)
-	if wantSites > vcfSNPs:
-		print 'Number of requested SNP sites to investigate exceeds number of identified SNPs'
-		print 'Selecting all %s putative SNP sites to print...' % vcfSNPs
-		wantSites = vcfSNPs
-	randSitesUnsorted = random.sample(SNPs, wantSites) #randomly selected sites to investigate
-	randSites = sorted(randSitesUnsorted, key=itemgetter(1), reverse=True)
+
+	# enable explicitly given positions (e.g., -p '89,3969181,44,123456') to investigate
+	if args.positions:
+		posList = [int(n) for n in args.positions.split(',')]
+		listWantSitesVCF = []
+		for i in posList:
+			if any(i in x for x in SNPs): 
+				for SNP in SNPs:
+					if SNP[1] == i:
+						listWantSitesVCF.append(SNP)
+			else:
+				sys.exit('ERROR: specified position %s not a SNP' % i)
+		quantityWantSites = len(listWantSitesVCF)
+		listWantSitesVCF.reverse()
+
+	# randomly select SNP sites if positions (-p) unspecified
+	else:
+		quantityWantSites = int(numsites)
+		if quantityWantSites > vcfSNPs:
+			print 'Number of requested SNP sites to investigate exceeds number of identified SNPs'
+			print 'Selecting all %s putative SNP sites to print...' % vcfSNPs
+			quantityWantSites = vcfSNPs
+
+		randSitesUnsorted = random.sample(SNPs, quantityWantSites) #randomly selected sites to investigate
+		listWantSitesVCF = sorted(randSitesUnsorted, key=itemgetter(1), reverse=True)
 
 	#calculate page and frames
 	doc = Platypus.BaseDocTemplate(output, topMargin=0, bottomMargin=0, leftMargin=10, rightMargin=0)
@@ -117,23 +135,27 @@ def main():
 	style.fontName = 'Courier'
 	style.fontSize = 6.5
 
-	Title = ("Report containing " + str(wantSites) + " of " + str(vcfSNPs) +
-			" putative SNPs for " + os.path.basename(invcf))
+	Title = ('Report containing ' + str(quantityWantSites) + ' of ' + str(vcfSNPs) +
+			' putative SNPs for ' + os.path.basename(invcf))
 	report = [Paragraph(Title, styles['Heading2'])]
-	while wantSites > 0:
+
+	while quantityWantSites > 0:
+		posMinusFitty = (listWantSitesVCF[quantityWantSites-1][1] - 50)
+		centeredPos = max(posMinusFitty, 0) #handles SNP sites at beginning of chrom (<50 bases in)
+
 		pileup = Platypus.Preformatted(get_ttview(inbam, infasta,
-		randSites[wantSites-1][0], randSites[wantSites-1][1] - 50, rows), style)
-		pos = str(randSites[wantSites-1][1])
-		QUAL = str(randSites[wantSites-1][2])
-		DP = str(randSites[wantSites-1][3])
-		MQ = str(randSites[wantSites-1][4])
-		SNP = str(randSites[wantSites-1][5])
-		header = Paragraph(SNP + " at position " + pos +
-			" with a QUAL of " + QUAL + ", MQ of " + MQ +
-			", and raw read depth (DP) of " + DP, styles['Heading6'])
+		listWantSitesVCF[quantityWantSites-1][0], centeredPos, rows), style)
+		pos = str(listWantSitesVCF[quantityWantSites-1][1])
+		QUAL = str(listWantSitesVCF[quantityWantSites-1][2])
+		DP = str(listWantSitesVCF[quantityWantSites-1][3])
+		MQ = str(listWantSitesVCF[quantityWantSites-1][4])
+		SNP = str(listWantSitesVCF[quantityWantSites-1][5])
+		header = Paragraph(SNP + ' at position ' + pos +
+			' with a QUAL of ' + QUAL + ', MQ of ' + MQ +
+			', and raw read depth (DP) of ' + DP, styles['Heading6'])
 		gap = Platypus.Spacer(0.25, 0.05*inch)
 		report.append(Platypus.KeepTogether([gap, header, pileup]))
-		wantSites -= 1
+		quantityWantSites -= 1
 	doc.build(report)
 
 
