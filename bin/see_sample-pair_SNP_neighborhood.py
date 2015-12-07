@@ -115,7 +115,7 @@ def get_pairwiseSNP_vcf(pos, infile):
 			del pos[0]
 		elif int(pos[0]) < record.POS:
 			print '%s position not found in %s' % (pos[0], infile)
-			vcfData.append([int(pos[0]), record.CHROM, '*absent from VCF*', '*absent from VCF*', '*absent from VCF*'])
+			vcfData.append([int(pos[0]), record.CHROM, '*POS not in VCF*', '*POS not in VCF*', '*POS not in VCF*'])
 			del pos[0]
 	return sorted(vcfData, reverse=True)
 
@@ -230,12 +230,12 @@ def main():
 		vcfData2[numSites-1][1], centeredPos, rows), style)
 
 		pos = str(vcfData1[numSites-1][0])
-		MQ1 = vcfData1[numSites-1][4]
-		MQ2 = vcfData2[numSites-1][4]
-		DP1 = vcfData1[numSites-1][3]
-		DP2 = vcfData2[numSites-1][3]
-		qual1 = vcfData1[numSites-1][2]
-		qual2 = vcfData2[numSites-1][2]
+		MQ1 = str(vcfData1[numSites-1][4])
+		MQ2 = str(vcfData2[numSites-1][4])
+		DP1 = str(vcfData1[numSites-1][3])
+		DP2 = str(vcfData2[numSites-1][3])
+		qual1 = str(vcfData1[numSites-1][2])
+		qual2 = str(vcfData2[numSites-1][2])
 		SNP = str(pairwiseSNPs[int(pos)][2] + '-vs-' + pairwiseSNPs[int(pos)][3])
 
 		header1 = Paragraph(SNP + ' at position ' + pos +
