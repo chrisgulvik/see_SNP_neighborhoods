@@ -10,6 +10,8 @@ all:samtools-depend $(PREFIX)/bin/ttview $(PREFIX)/bin/bamsorted $(PREFIX)/bin/b
 
 samtools-depend:
 	cd $(PREFIX)/samtools-0.1.18/ && make && cd $(PREFIX)
+	ln -sf $(PREFIX)/samtools-0.1.18/samtools-0.1.18 $(PREFIX)/bin/samtools-0.1.18
+
 
 checksamenv:
 	echo "Compiling with SAMDIR=$$SAMDIR"
@@ -33,5 +35,5 @@ test-samtools:
 
 
 clean:
-	rm -f $(PREFIX)/bin/ttview $(PREFIX)/bin/bamsorted $(PREFIX)/bin/bam2wig
+	rm -f $(PREFIX)/bin/samtools-0.1.18 $(PREFIX)/bin/ttview $(PREFIX)/bin/bamsorted $(PREFIX)/bin/bam2wig
 	cd $(PREFIX)/samtools-0.1.18 && make clean
