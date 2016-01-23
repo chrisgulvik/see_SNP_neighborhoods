@@ -1,6 +1,7 @@
 # see SNP neighborhoods
 **Purpose:** visualize read pileup neighborhoods of SNPs to identify false positives
 
+![alt tag](https://github.com/chrisgulvik/images/raw/master/see-SNPs.jpg)
 
 **Install:**
 compile from source with make and export the bin dir to execute a python script
