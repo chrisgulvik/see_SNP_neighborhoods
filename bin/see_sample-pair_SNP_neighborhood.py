@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # usage: python see_gSNP_neighborhood.py -1 Sample1 -2 Sample1 -f reference.fasta -b1 Sample1.Input.sorted.bam -b2 Sample2.Input.sorted.bam -v1 Sample1.Input.vcf[.gz] -v2 Sample2.Input.vcf[.gz] -s out.snpmatrix.tsv
-# see_sample-pair_SNP_neighborhood.py -n 4 -f reference/reference.fasta -1 3000113810 -2 3000113846 -b1 bam/3000113810.fastq-reference.sorted.bam -b2 bam/3000113846.fastq-reference.sorted.bam -s msa/out.snpmatrix.tsv -v1 vcf/3000113810.fastq-reference.vcf -v2 vcf/3000113846.fastq-reference.vcf
-
+# python ~/see_SNP_neighborhoods/bin/see_sample-pair_SNP_neighborhood.py -1 3015160756 -b1 bam/3015160756.fastq-GCA_000770215.1_ASM77021v1_genomic.sorted.bam -v1 vcf/3015160756.fastq-GCA_000770215.1_ASM77021v1_genomic.vcf.gz -f $HOME/Desktop/2015_GA_Dental_Outbreak/GCA_000770215.1_ASM77021v1_genomic.fna -s out/snpmatrix.tsv -2 3015159886 -b2 bam/3015159886.fastq-GCA_000770215.1_ASM77021v1_genomic.sorted.bam -v2 vcf/3015159886.fastq-GCA_000770215.1_ASM77021v1_genomic.vcf.gz -r 30 -o OUTPUT.pdf
 
 import argparse
 import os
@@ -11,13 +10,14 @@ import subprocess
 import sys
 import reportlab.platypus as Platypus
 import vcf
+import vcf.model
 from operator import itemgetter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus.paragraph import Paragraph
 from reportlab.lib.units import inch
 from reportlab.rl_config import defaultPageSize
-
+from vcf import utils
 
 def parseArgs(args=None):
 	parser = argparse.ArgumentParser(description='Prints raw read pileups to manually inspect putative SNPs of a sample pair')
@@ -34,7 +34,6 @@ def parseArgs(args=None):
 	parser.add_argument('-n', '--numsites', type=int, default=10, help='number of SNP sites to investigate')
 	parser.add_argument('-p', '--positions', help='CSV-delimited list of SNP positions to investigate')
 	return parser.parse_args()
-
 
 def get_longestSubstr(s1, s2):
 	longestSubstr = ''
@@ -54,7 +53,6 @@ def get_longestSubstr(s1, s2):
 		if len(match) > len(longestSubstr):
 			longestSubstr = match
 	return longestSubstr.rstrip('.') #discard trailing period if exists
-
 
 def get_pairwiseSNPlist(snpMatrix, Sample1Name, Sample2Name):
 	pairedSNPs = {}
@@ -90,35 +88,66 @@ def get_pairwiseSNPlist(snpMatrix, Sample1Name, Sample2Name):
 				# 	print 'no SNP in position %s: %s & %s are identical' % (SamplePos, Sample1Nucl, Sample2Nucl)
 	return pairedSNPs
 
+def make_data_dict(record, sample_ID):
+	# hack to make a dict from a _Call object
+	data_dict = {}
+	for item in re.split(', [A-Z]', str((record.genotype(sample_ID)).data).lstrip('CallData(').rstrip(')')):
+		if '=' in item:  #avoid unusual string containing 'one]' or 'one'
+			key, val = item.split('=')
+			data_dict[key] = val
+	return data_dict
 
-def get_pairwiseSNP_vcf(pos, infile):
-	VCF = vcf.Reader(filename=infile, strict_whitespace=True)
-	vcfData = []
-	for record in VCF: #class 'vcf.parser.Reader' object
+def get_vcf_data(pos, infile1, infile2):
+	''' takes in a list of coordinates and uses 2 vcf files
+	to return 2 lists of the coordinates with associated quality data '''
+	VCF1 = vcf.Reader(filename=infile1, strict_whitespace=True)
+	ID1 = VCF1.samples[0]
+	VCF2 = vcf.Reader(filename=infile2, strict_whitespace=True)
+	ID2 = VCF2.samples[0]
+	vcf_iter = utils.walk_together(VCF1, VCF2, vcf_record_sort_key=lambda r: (r.CHROM, r.POS, r.REF))
+	vcfData1 = []  #order is: [pos, chrom, qual, DP, MQ, alt]
+	vcfData2 = []
+	for (rec1, rec2) in vcf_iter:
 		if not pos:
-			#print 'quit parsing on %s (to save time)' % record.POS
+			print 'quit parsing on {} (to save time)'.format(rec1.POS)
 			break
-		if int(pos[0]) == record.POS:
-			if 'DP' in record.INFO: #record.INFO is a dict
-				DP = record.INFO['DP']	
-			else:
-				DP = '*not available*'
-			if 'MQ' in record.INFO:
-				MQ = record.INFO['MQ']
-			else:
-				MQ = '*not available*'
-			if record.QUAL:
-				QUAL = str(round(record.QUAL, 1))
-			else:  #avoids error when 'QUAL' in VCF is '.'
-				QUAL = '*not available*'
-			vcfData.append([int(pos[0]), record.CHROM, QUAL, DP, MQ])
-			del pos[0]
-		elif int(pos[0]) < record.POS:
-			print '%s position not found in %s' % (pos[0], infile)
-			vcfData.append([int(pos[0]), record.CHROM, '*POS not in VCF*', '*POS not in VCF*', '*POS not in VCF*'])
-			del pos[0]
-	return sorted(vcfData, reverse=True)
+		if rec1 is not None and rec2 is not None:
+			#print (rec1.genotype(ID1)).data #rec1.genotype(ID1) = class 'vcf.model._Call'
+			# rec1.FORMAT gives 'GT:GQ:SDP:DP:RD:AD:FREQ:PVAL:RBQ:ABQ:RDF:RDR:ADF:ADR:FT:DP4'
+			if pos[0] == rec1.POS:
+				for (rec, ID, vcfData) in [(rec1, ID1, vcfData1), (rec2, ID2, vcfData2)]:
+					print 'rec %s ID %s' % (rec, ID)
+					single_pos_VCF_dataset = []
+					single_pos_VCF_dataset.extend((pos[0], rec.CHROM))
+					if rec.QUAL is None:
+						single_pos_VCF_dataset.append('-')
+					else:
+						single_pos_VCF_dataset.append(rec.QUAL)
 
+					# add metrics of interest
+					metrics = ['DP', 'MQ']
+					vcf_data_dict = make_data_dict(rec, ID)
+					for metric in metrics:
+						if metric in vcf_data_dict:
+							single_pos_VCF_dataset.append(vcf_data_dict[metric])
+						else:
+							single_pos_VCF_dataset.append('-')
+
+					# get nucleotide identity [ATCG] even if same as Ref
+					if rec.ALT[0] is None:
+						nucleotide = rec.REF[0]
+					else:
+						nucleotide = str(rec.ALT[0])
+					single_pos_VCF_dataset.append(nucleotide)
+					print single_pos_VCF_dataset
+					vcfData.append(single_pos_VCF_dataset)
+				del pos[0]
+
+			elif pos[0] < rec1.POS:
+				print '{} position not found in {}'.format(pos[0], infile1)
+				del pos[0]
+
+	return sorted(vcfData1, reverse=True), sorted(vcfData2, reverse=True)
 
 def get_ttview(bam, fasta, chrom, pos, rows):
 	x = 100
@@ -126,10 +155,10 @@ def get_ttview(bam, fasta, chrom, pos, rows):
 		'-X', str(x), #number of columns to show including the SNP site
 		'-g', '%s:%s' % (chrom, pos), #position to inspect
 		bam, fasta]
+	print viewCmd
 	pileup = subprocess.Popen(viewCmd, stdout=subprocess.PIPE)
 	out, err = pileup.communicate()
 	return '\n'.join(out.split('\n')[0:rows])
-
 
 def main():
 	args = parseArgs()
@@ -145,7 +174,7 @@ def main():
 	Sample2Name = args.Sample2Name
 	snpMatrix = args.snpmatrix
 
-	# attempt to auto-detect sample names (experimental)
+	# Attempt to auto-detect sample names (experimental)
 	if not Sample1Name:
 		Sample1Name = (get_longestSubstr(inbam1, invcf1)).rstrip('.fastq-reference')
 	if not Sample2Name:
@@ -154,7 +183,7 @@ def main():
 	pairwiseSNPs = get_pairwiseSNPlist(snpMatrix, Sample1Name, Sample2Name)
 	pairwiseSNPpositions = pairwiseSNPs.keys()
 
-	# enable explicitly given positions (e.g., -p '89,3969181,44,123456') to investigate
+	# Enable explicitly given positions (e.g., -p '89,3969181,44,123456') to investigate
 	if args.positions:
 		posList = [int(n) for n in args.positions.split(',')]
 		unsortedListWantSitesVCF = []
@@ -162,34 +191,30 @@ def main():
 			if i in pairwiseSNPpositions:
 				unsortedListWantSitesVCF.append(i)
 			else:
-				sys.exit('ERROR: specified position %s not a pairwise SNP' % i)
+				sys.exit('ERROR: specified position {} not a pairwise SNP'.format(i))
 		quantityWantSites = len(unsortedListWantSitesVCF)
 		listWantSitesVCF = sorted(unsortedListWantSitesVCF, reverse=True) #for pileup report building
 		SitesVCF = sorted(unsortedListWantSitesVCF)
-		Sites1 = SitesVCF[:] #copy because I delete each pos/element as I iterate through the list in the get_pairwiseSNP_vcf function
-		Sites2 = SitesVCF[:]
 
-	# randomly select SNP sites if positions (-p) unspecified
+	# Randomly select SNP sites if positions (-p) unspecified
 	else:
 		if quantityWantSites > len(pairwiseSNPpositions):
-			print 'Number of requested SNP sites to investigate exceeds number of identified SNPs'
-			print 'Selecting all %s putative SNP sites to print...' % len(pairwiseSNPpositions)
+			print 'Selecting all {} putative SNP sites to print...'.format(len(pairwiseSNPpositions))
 			quantityWantSites = len(pairwiseSNPpositions)
-		randSitesUnsorted = random.sample(pairwiseSNPpositions, quantityWantSites) #randomly selected sites to investigate
-		randSitesUnsortedInts = [int(i) for i in randSitesUnsorted] #convert strings to integers
-		listWantSitesVCF = sorted(randSitesUnsortedInts, reverse=True) #for pileup report building
+		randSitesUnsorted = random.sample(pairwiseSNPpositions, quantityWantSites)  #randomly selected sites to investigate
+		randSitesUnsortedInts = [int(i) for i in randSitesUnsorted]  #convert strings to integers
+		listWantSitesVCF = sorted(randSitesUnsortedInts, reverse=True)  #for pileup report building
 		randSites = sorted(randSitesUnsortedInts)
-		Sites1 = randSites[:] #copy because I delete each pos/element as I iterate through the list in the get_pairwiseSNP_vcf function
-		Sites2 = randSites[:]
 
-	vcfData1 = get_pairwiseSNP_vcf(Sites1, invcf1)
-	vcfData2 = get_pairwiseSNP_vcf(Sites2, invcf2)
+	vcfData1, vcfData2 = get_vcf_data(randSites, invcf1, invcf2)
 
 	if len(vcfData1) != len(vcfData2):
+		print 'ERROR: unequal number of SNPs identified between {} and {}'.format(Sample1Name, Sample2Name)
 		sys.exit('ERROR in VCF parsing')
 	numSites = len(vcfData1)
+	print 'LENGTH: {}'.format(numSites)
 
-	#calculate page and frames
+	# Calculate page and frames
 	doc = Platypus.BaseDocTemplate(output, topMargin=0, bottomMargin=0, leftMargin=10, rightMargin=0)
 	doc.pagesize = landscape(A4) #ISO Code A4
 	# A4 Dimensions: 297 mm x 210 mm ; 11.69 in x 8.27 in ; 842 pt x 595 pt
@@ -199,14 +224,14 @@ def main():
 	frameHeight = doc.width - .05 * inch
 	frames = []
 
-	#construct a frame for each column
+	# Construct a frame for each column
 	for frame in range(frameCount):
 		leftMargin = doc.leftMargin + frame * frameWidth
 		column = Platypus.Frame(leftMargin, doc.bottomMargin, frameWidth, frameHeight)
 		frames.append(column)
 	template = Platypus.PageTemplate(frames=frames)
 	doc.addPageTemplates(template)
-	
+
 	PAGE_HEIGHT = defaultPageSize[0] #size in points
 	PAGE_WIDTH = defaultPageSize[1]
 	styles = getSampleStyleSheet()
@@ -220,41 +245,35 @@ def main():
 	report = [Paragraph(Title, styles['Heading2'])]
 
 	while numSites > 0:
-		#handle SNP sites at beginning of Chrom (<50 bases in)
+		# handle SNP sites at beginning of Chrom (<50 bases in)
 		posMinusFitty = (listWantSitesVCF[numSites - 1] - 50)
-		centeredPos = str(max(posMinusFitty, 0)) 
-
-		pileup1 = Platypus.Preformatted(get_ttview(inbam1, infasta,
-		vcfData1[numSites-1][1], centeredPos, rows), style)
-		pileup2 = Platypus.Preformatted(get_ttview(inbam2, infasta,
-		vcfData2[numSites-1][1], centeredPos, rows), style)
+		centeredPos = str(max(posMinusFitty, 0))
+		print 'numS {} listWantSitesVCF {} centeredPos {}'.format(numSites, listWantSitesVCF, centeredPos)
 
 		pos = str(vcfData1[numSites-1][0])
-		MQ1 = str(vcfData1[numSites-1][4])
-		MQ2 = str(vcfData2[numSites-1][4])
-		DP1 = str(vcfData1[numSites-1][3])
-		DP2 = str(vcfData2[numSites-1][3])
-		qual1 = str(vcfData1[numSites-1][2])
-		qual2 = str(vcfData2[numSites-1][2])
-		SNP = str(pairwiseSNPs[int(pos)][2] + '-vs-' + pairwiseSNPs[int(pos)][3])
-
-		header1 = Paragraph(SNP + ' at position ' + pos +
-			' for ' + Sample1Name +
-			' with a QUAL of ' + qual1 + ", MQ of " + MQ1 +
-			', and raw read depth (DP) of ' + DP1
-			, styles['Heading6'])
-		header2 = Paragraph(SNP + ' at position ' + pos +
-			' for ' + Sample2Name +
-			' with a QUAL of ' + qual2 + ", MQ of " + MQ2 +
-			', and raw read depth (DP) of ' + DP2
-			, styles['Heading6'])
+		#SNP = str(vcfData1[numSites-1][5]) + '-vs-' + str(vcfData2[numSites-1][5])
 
 		gap = Platypus.Spacer(0.25, 0.05*inch)
-		report.append(Platypus.KeepTogether([gap, header1, pileup1]))
-		report.append(Platypus.KeepTogether([gap, header2, pileup2]))
-		numSites -= 1
-	doc.build(report)
 
+		# vcfData lists are ordered: [pos, chrom, qual, DP, MQ, alt]
+		for sample in [[vcfData1, inbam1, Sample1Name], [vcfData2, inbam2, Sample2Name]]:
+			print sample[0]
+			pileup = Platypus.Preformatted(get_ttview(sample[1], infasta,
+								(sample[0][1][1]), centeredPos, rows), style)
+
+			qual = sample[0][numSites-1][2]
+			DP   = sample[0][numSites-1][3]
+			MQ   = sample[0][numSites-1][4]
+			SNP  = str(sample[0][numSites-1][5])
+			
+			header = Paragraph('{} at position {} for {} with a QUAL of {}, MQ of {}, and raw read depth (DP) of {}'.format(
+				SNP, pos, sample[2], qual, MQ, DP), styles['Heading6'])
+			print 'header %s' % header
+			report.append(Platypus.KeepTogether([gap, header, pileup]))
+
+		numSites -= 1
+
+	doc.build(report)
 
 if __name__ == '__main__':
 	main()
