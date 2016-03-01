@@ -9,7 +9,6 @@ import sys
 import reportlab.platypus as Platypus
 import vcf
 import vcf.utils
-from operator import itemgetter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus.paragraph import Paragraph
@@ -95,9 +94,6 @@ def get_vcf_data(pos, infile1, infile2):
 			# rec1.FORMAT gives 'GT:GQ:SDP:DP:RD:AD:FREQ:PVAL:RBQ:ABQ:RDF:RDR:ADF:ADR:FT:DP4'
 			if pos[0] == rec1.POS:
 				for (rec, ID, vcfData) in [(rec1, ID1, vcfData1), (rec2, ID2, vcfData2)]:
-					print rec
-					print 'DP: %s' % rec.INFO.get('DP')
-					print 'QUAL: %s' % type(rec.QUAL)
 					single_pos_VCF_dataset = []
 					single_pos_VCF_dataset.extend((pos[0], rec.CHROM))
 					if rec.QUAL:
